@@ -4,6 +4,7 @@ import software.amazon.awscdk.Duration;
 import software.amazon.awscdk.RemovalPolicy;
 import software.amazon.awscdk.Stack;
 import software.amazon.awscdk.StackProps;
+import software.amazon.awscdk.services.applicationautoscaling.EnableScalingProps;
 import software.amazon.awscdk.services.ec2.Peer;
 import software.amazon.awscdk.services.ec2.Port;
 import software.amazon.awscdk.services.ec2.Vpc;
@@ -13,6 +14,7 @@ import software.amazon.awscdk.services.ecs.AwsLogDriverProps;
 import software.amazon.awscdk.services.ecs.Cluster;
 import software.amazon.awscdk.services.ecs.ContainerDefinitionOptions;
 import software.amazon.awscdk.services.ecs.ContainerImage;
+import software.amazon.awscdk.services.ecs.CpuUtilizationScalingProps;
 import software.amazon.awscdk.services.ecs.FargateService;
 import software.amazon.awscdk.services.ecs.FargateServiceProps;
 import software.amazon.awscdk.services.ecs.FargateTaskDefinition;
@@ -20,6 +22,7 @@ import software.amazon.awscdk.services.ecs.FargateTaskDefinitionProps;
 import software.amazon.awscdk.services.ecs.LoadBalancerTargetOptions;
 import software.amazon.awscdk.services.ecs.PortMapping;
 import software.amazon.awscdk.services.ecs.Protocol;
+import software.amazon.awscdk.services.ecs.ScalableTaskCount;
 import software.amazon.awscdk.services.elasticloadbalancingv2.AddApplicationTargetsProps;
 import software.amazon.awscdk.services.elasticloadbalancingv2.AddNetworkTargetsProps;
 import software.amazon.awscdk.services.elasticloadbalancingv2.ApplicationListener;
@@ -193,6 +196,17 @@ public class AuditServiceStack extends Stack {
                         .build()
         );
 
+        ScalableTaskCount scalableTaskCount = fargateService.autoScaleTaskCount(
+                EnableScalingProps.builder()
+                        .maxCapacity(4)
+                        .minCapacity(2)
+                        .build());
+        scalableTaskCount.scaleOnCpuUtilization("AuditServiceAutoScaling",
+                CpuUtilizationScalingProps.builder()
+                        .targetUtilizationPercent(80)
+                        .scaleInCooldown(Duration.seconds(60))
+                        .scaleOutCooldown(Duration.seconds(60))
+                        .build());
     }
 }
 
