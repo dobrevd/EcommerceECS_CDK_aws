@@ -9,9 +9,11 @@ import software.amazon.awscdk.services.dynamodb.Attribute;
 import software.amazon.awscdk.services.dynamodb.AttributeType;
 import software.amazon.awscdk.services.dynamodb.BillingMode;
 import software.amazon.awscdk.services.dynamodb.GlobalSecondaryIndexProps;
+import software.amazon.awscdk.services.dynamodb.IScalableTableAttribute;
 import software.amazon.awscdk.services.dynamodb.ProjectionType;
 import software.amazon.awscdk.services.dynamodb.Table;
 import software.amazon.awscdk.services.dynamodb.TableProps;
+import software.amazon.awscdk.services.dynamodb.UtilizationScalingProps;
 import software.amazon.awscdk.services.ec2.Peer;
 import software.amazon.awscdk.services.ec2.Port;
 import software.amazon.awscdk.services.ec2.Vpc;
@@ -88,6 +90,41 @@ public class ProductsServiceStack extends Stack {
                             .readCapacity(1)
                             .writeCapacity(1)
                     .build());
+
+        IScalableTableAttribute readScale = productsDdb.autoScaleReadCapacity(
+                software.amazon.awscdk.services.dynamodb.EnableScalingProps.builder()
+                .maxCapacity(4)
+                .minCapacity(1)
+                .build());
+        readScale.scaleOnUtilization(UtilizationScalingProps.builder()
+                        .targetUtilizationPercent(10)
+                        .scaleInCooldown(Duration.seconds(20))
+                        .scaleOutCooldown(Duration.seconds(20))
+                .build());
+
+        IScalableTableAttribute writeScale = productsDdb.autoScaleWriteCapacity(
+                software.amazon.awscdk.services.dynamodb.EnableScalingProps.builder()
+                        .maxCapacity(4)
+                        .minCapacity(1)
+                        .build());
+        writeScale.scaleOnUtilization(UtilizationScalingProps.builder()
+                .targetUtilizationPercent(10)
+                .scaleInCooldown(Duration.seconds(20))
+                .scaleOutCooldown(Duration.seconds(20))
+                .build());
+
+        IScalableTableAttribute readIndexScale = productsDdb.autoScaleGlobalSecondaryIndexReadCapacity(
+                "codeInx", software.amazon.awscdk.services.dynamodb.EnableScalingProps.builder()
+                        .maxCapacity(4)
+                        .minCapacity(1)
+                        .build());
+        readIndexScale.scaleOnUtilization(UtilizationScalingProps.builder()
+                .targetUtilizationPercent(10)
+                .scaleInCooldown(Duration.seconds(20))
+                .scaleOutCooldown(Duration.seconds(20))
+                .build());
+
+
 
         FargateTaskDefinition fargateTaskDefinition = new FargateTaskDefinition(this, "TaskDefinition",
                 FargateTaskDefinitionProps.builder()
