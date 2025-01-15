@@ -16,6 +16,7 @@ import java.util.List;
 public class EcrStack extends Stack {
     private final Repository productsServiceRepository;
     private final Repository auditServiceRepository;
+    private final Repository invoiceServiceRepository;
 
     public EcrStack(final Construct scope, final String id, final StackProps props){
         super(scope, id, props);
@@ -45,6 +46,19 @@ public class EcrStack extends Stack {
                                 .maxImageAge(Duration.days(30))
                                 .build()))
                         .build());
+
+        invoiceServiceRepository = new Repository(this, "InvoiceService",
+                RepositoryProps.builder()
+                        .repositoryName("invoiceservice")
+                        .removalPolicy(RemovalPolicy.DESTROY)
+                        .imageTagMutability(TagMutability.IMMUTABLE)
+                        .lifecycleRules(List.of(LifecycleRule.builder()
+                                .rulePriority(1)
+                                .description("Delete untagged images older than 30 days")
+                                .tagStatus(TagStatus.UNTAGGED)
+                                .maxImageAge(Duration.days(30))
+                                .build()))
+                        .build());
     }
     public Repository getProductsServiceRepository() {
         return productsServiceRepository;
@@ -52,5 +66,9 @@ public class EcrStack extends Stack {
 
     public Repository getAuditServiceRepository() {
         return auditServiceRepository;
+    }
+
+    public Repository getInvoiceServiceRepository() {
+        return invoiceServiceRepository;
     }
 }

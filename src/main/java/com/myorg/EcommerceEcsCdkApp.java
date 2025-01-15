@@ -84,6 +84,28 @@ public class EcommerceEcsCdkApp {
         auditServiceStack.addDependency(ecrStack);
         auditServiceStack.addDependency(productsServiceStack);
 
+        Map<String, String> invoicesServiceTags = new HashMap<>();
+        invoicesServiceTags.put("team", "NumberOne");
+        invoicesServiceTags.put("cost", "InvoicesService");
+
+        InvoicesServiceStack invoicesServiceStack = new InvoicesServiceStack(app, "InvoicesService",
+                StackProps.builder()
+                        .env(environment)
+                        .tags(invoicesServiceTags)
+                        .build(),
+                new InvoicesServiceStackProps(
+                        vpcStack.getVpc(),
+                        clusterStack.getCluster(),
+                        nlbStack.getNetworkLoadBalancer(),
+                        nlbStack.getApplicationLoadBalancer(),
+                        ecrStack.getInvoiceServiceRepository()));
+        invoicesServiceStack.addDependency(vpcStack);
+        invoicesServiceStack.addDependency(clusterStack);
+        invoicesServiceStack.addDependency(nlbStack);
+        invoicesServiceStack.addDependency(ecrStack);
+        invoicesServiceStack.addDependency(productsServiceStack);
+
+
         ApiStack apiStack = new ApiStack(app, "Api",
                 StackProps.builder()
                         .env(environment)
