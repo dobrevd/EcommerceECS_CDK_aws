@@ -4,6 +4,11 @@ import software.amazon.awscdk.Duration;
 import software.amazon.awscdk.RemovalPolicy;
 import software.amazon.awscdk.Stack;
 import software.amazon.awscdk.StackProps;
+import software.amazon.awscdk.services.dynamodb.Attribute;
+import software.amazon.awscdk.services.dynamodb.AttributeType;
+import software.amazon.awscdk.services.dynamodb.BillingMode;
+import software.amazon.awscdk.services.dynamodb.Table;
+import software.amazon.awscdk.services.dynamodb.TableProps;
 import software.amazon.awscdk.services.ec2.Peer;
 import software.amazon.awscdk.services.ec2.Port;
 import software.amazon.awscdk.services.ec2.Vpc;
@@ -30,12 +35,27 @@ import software.amazon.awscdk.services.elasticloadbalancingv2.BaseNetworkListene
 import software.amazon.awscdk.services.elasticloadbalancingv2.HealthCheck;
 import software.amazon.awscdk.services.elasticloadbalancingv2.NetworkListener;
 import software.amazon.awscdk.services.elasticloadbalancingv2.NetworkLoadBalancer;
+import software.amazon.awscdk.services.iam.Effect;
 import software.amazon.awscdk.services.iam.ManagedPolicy;
+import software.amazon.awscdk.services.iam.Policy;
+import software.amazon.awscdk.services.iam.PolicyProps;
+import software.amazon.awscdk.services.iam.PolicyStatement;
+import software.amazon.awscdk.services.iam.PolicyStatementProps;
 import software.amazon.awscdk.services.logs.LogGroup;
 import software.amazon.awscdk.services.logs.LogGroupProps;
 import software.amazon.awscdk.services.logs.RetentionDays;
+import software.amazon.awscdk.services.s3.Bucket;
+import software.amazon.awscdk.services.s3.BucketProps;
+import software.amazon.awscdk.services.s3.EventType;
+import software.amazon.awscdk.services.s3.LifecycleRule;
+import software.amazon.awscdk.services.s3.notifications.SqsDestination;
+import software.amazon.awscdk.services.sqs.DeadLetterQueue;
+import software.amazon.awscdk.services.sqs.Queue;
+import software.amazon.awscdk.services.sqs.QueueEncryption;
+import software.amazon.awscdk.services.sqs.QueueProps;
 import software.constructs.Construct;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -47,6 +67,53 @@ public class InvoicesServiceStack extends Stack {
                                 final StackProps props, InvoicesServiceStackProps invoicesServiceProps){
         super(scope, id, props);
 
+        Table invoicesDdb = new Table(this, "InvoicesDdb", TableProps.builder()
+                .tableName("invoices")
+                .removalPolicy(RemovalPolicy.DESTROY)
+                .partitionKey(Attribute.builder()
+                        .name("pk")
+                        .type(AttributeType.STRING)
+                        .build())
+                .sortKey(Attribute.builder()
+                        .name("sk")
+                        .type(AttributeType.STRING)
+                        .build())
+                .timeToLiveAttribute("ttl")
+                .billingMode(BillingMode.PROVISIONED)
+                .readCapacity(1)
+                .writeCapacity(1)
+                .build());
+
+        Bucket bucket = new Bucket(this, "InvoicesBucket", BucketProps.builder()
+                .removalPolicy(RemovalPolicy.DESTROY)
+                .autoDeleteObjects(true)
+                .lifecycleRules(Collections.singletonList(LifecycleRule.builder()
+                                .enabled(true)
+                                .expiration(Duration.days(1))
+                        .build()))
+                .build());
+
+        Queue invoicesEventsDlq = new Queue(this, "InvoicesEventsDlq",
+                QueueProps.builder()
+                        .queueName("invoices-events-dlq")
+                        .retentionPeriod(Duration.days(10))
+                        .enforceSsl(false)
+                        .encryption(QueueEncryption.UNENCRYPTED)
+                        .build()
+        );
+        Queue invoicesEventsQueue = new Queue(this, "InvoicesEventsQueue",
+                QueueProps.builder()
+                        .queueName("invoices-events")
+                        .enforceSsl(false)
+                        .encryption(QueueEncryption.UNENCRYPTED)
+                        .deadLetterQueue(DeadLetterQueue.builder()
+                                .queue(invoicesEventsDlq)
+                                .maxReceiveCount(3)
+                                .build())
+                        .build()
+        );
+        bucket.addEventNotification(EventType.OBJECT_CREATED, new SqsDestination(invoicesEventsQueue));
+
         FargateTaskDefinition fargateTaskDefinition = new FargateTaskDefinition(this, "TaskDefinition",
                 FargateTaskDefinitionProps.builder()
                         .family("invoices-service")
@@ -54,6 +121,18 @@ public class InvoicesServiceStack extends Stack {
                         .memoryLimitMiB(1024)
                         .build());
         fargateTaskDefinition.getTaskRole().addManagedPolicy(ManagedPolicy.fromAwsManagedPolicyName("AWSXrayWriteOnlyAccess"));
+        invoicesDdb.grantReadWriteData(fargateTaskDefinition.getTaskRole());
+        invoicesEventsQueue.grantConsumeMessages(fargateTaskDefinition.getTaskRole());
+
+        PolicyStatement invoiceBucketPutObjectPolicy = new PolicyStatement(PolicyStatementProps.builder()
+                .effect(Effect.ALLOW)
+                .actions(Arrays.asList("s3:PutObject", "s3:DeleteObject", "s3:GetObject"))
+                .resources(Collections.singletonList(bucket.getBucketArn() + "/*"))
+                .build());
+        Policy s3TaskRolePolicy = new Policy(this, "S3TaskRolePolicy", PolicyProps.builder()
+                .statements(Collections.singletonList(invoiceBucketPutObjectPolicy))
+                .build());
+        s3TaskRolePolicy.attachToRole(fargateTaskDefinition.getTaskRole());
 
         AwsLogDriver logDriver = new AwsLogDriver(AwsLogDriverProps.builder()
                 .logGroup(new LogGroup(this, "LogGroup",
@@ -72,6 +151,9 @@ public class InvoicesServiceStack extends Stack {
         envVariables.put("AWS_XRAY_CONTEXT_MISSING", "IGNORE_ERROR");
         envVariables.put("AWS_XRAY_TRACING_NAME", "invoicesservice");
         envVariables.put("LOGGING_LEVEL_ROOT", "INFO");
+        envVariables.put("INVOICES_DDB_NAME", invoicesDdb.getTableName());
+        envVariables.put("INVOICES_BUCKET_NAME", bucket.getBucketName());
+        envVariables.put("AWS_SQS_QUEUE_INVOICE_EVENTS_URL", invoicesEventsQueue.getQueueName());
 
         fargateTaskDefinition.addContainer("InvoicesServiceContainer",
                 ContainerDefinitionOptions.builder()

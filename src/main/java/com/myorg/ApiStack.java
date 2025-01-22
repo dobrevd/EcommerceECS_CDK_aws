@@ -70,6 +70,92 @@ public class ApiStack extends Stack {
 
         var productsResource = this.createProductsResource(restApi, apiStackProps);
         this.createProductEventsResource(restApi, apiStackProps, productsResource);
+        this.createInvoicesResources(restApi, apiStackProps);
+    }
+
+    private void createInvoicesResources(RestApi restApi, ApiStackProps apiStackProps){
+        // /invoices
+        Resource invoicesResource = restApi.getRoot().addResource("invoices");
+
+        Map<String, String> invoicesIntegrationParameters = new HashMap<>();
+        invoicesIntegrationParameters.put("integration.request.header.requestId", "context.requestId");
+
+        Map<String, Boolean> invoicesMethodParameters = new HashMap<>();
+        invoicesMethodParameters.put("method.request.header.requestId", false);
+
+        // POST /invoices
+        invoicesResource.addMethod("POST", new Integration(
+                        IntegrationProps.builder()
+                                .type(IntegrationType.HTTP_PROXY)
+                                .integrationHttpMethod("POST")
+                                .uri("http://" + apiStackProps.networkLoadBalancer().getLoadBalancerDnsName()
+                                        + ":9095/api/invoices")
+                                .options(IntegrationOptions.builder()
+                                        .vpcLink(apiStackProps.vpcLink())
+                                        .connectionType(ConnectionType.VPC_LINK)
+                                        .requestParameters(invoicesIntegrationParameters)
+                                        .build())
+                                .build()),
+                MethodOptions.builder()
+                        .requestParameters(invoicesMethodParameters)
+                        .build());
+
+        Map<String, String> invoiceFileTransactionIntegrationParameters = new HashMap<>();
+        invoiceFileTransactionIntegrationParameters.put("integration.request.path.fileTransactionId",
+                "method.request.path.fileTransactionId");
+        invoiceFileTransactionIntegrationParameters.put("integration.request.header.requestId", "context.requestId");
+
+        Map<String, Boolean> invoiceFileTransactionMethodParameters = new HashMap<>();
+        invoiceFileTransactionMethodParameters.put("method.request.path.fileTransactionId", true);
+        invoiceFileTransactionMethodParameters.put("method.request.header.requestId", false);
+
+        // GET /invoices/transactions/{fileTransactionId}
+        Resource invoiceTransactionsResource = invoicesResource.addResource("transactions");
+        Resource invoiceFileTransactionsResource = invoiceTransactionsResource.addResource("{fileTransactionId}");
+
+        invoiceFileTransactionsResource.addMethod("GET", new Integration(IntegrationProps.builder()
+                .type(IntegrationType.HTTP_PROXY)
+                .integrationHttpMethod("GET")
+                .uri("http://" + apiStackProps.networkLoadBalancer().getLoadBalancerDnsName() +
+                        ":9095/api/invoices/transactions/{fileTransactionId}")
+                .options(IntegrationOptions.builder()
+                        .vpcLink(apiStackProps.vpcLink())
+                        .connectionType(ConnectionType.VPC_LINK)
+                        .requestParameters(invoiceFileTransactionIntegrationParameters)
+                        .build())
+                .build()), MethodOptions.builder()
+                .requestValidator(new RequestValidator(this,  "InvoiceTransactionsValidator",
+                        RequestValidatorProps.builder()
+                                .restApi(restApi)
+                                .requestValidatorName("InvoiceTransactionsValidator")
+                                .validateRequestParameters(true)
+                                .build()))
+                .requestParameters(invoiceFileTransactionMethodParameters)
+                .build());
+
+        // GET /invoices?email=matilde@siecola.com.br
+        Map<String, Boolean> customerInvoicesMethodParameters = new HashMap<>();
+        customerInvoicesMethodParameters.put("method.request.header.requestId", false);
+        customerInvoicesMethodParameters.put("method.request.querystring.email", true);
+
+        invoicesResource.addMethod("GET", new Integration(IntegrationProps.builder()
+                .type(IntegrationType.HTTP_PROXY)
+                .integrationHttpMethod("GET")
+                .uri("http://" + apiStackProps.networkLoadBalancer().getLoadBalancerDnsName() +
+                        ":9095/api/invoices")
+                .options(IntegrationOptions.builder()
+                        .vpcLink(apiStackProps.vpcLink())
+                        .connectionType(ConnectionType.VPC_LINK)
+                        .requestParameters(invoicesIntegrationParameters)
+                        .build())
+                .build()), MethodOptions.builder()
+                .requestValidator(new RequestValidator(this, "CustomerInvoicesValidator", RequestValidatorProps.builder()
+                        .restApi(restApi)
+                        .requestValidatorName("CustomerInvoicesValidator")
+                        .validateRequestParameters(true)
+                        .build()))
+                .requestParameters(customerInvoicesMethodParameters)
+                .build());
     }
 
     private void createProductEventsResource(RestApi restApi, ApiStackProps apiStackProps, Resource productsResource){
