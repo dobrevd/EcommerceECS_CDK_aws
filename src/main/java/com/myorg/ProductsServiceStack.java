@@ -5,6 +5,12 @@ import software.amazon.awscdk.RemovalPolicy;
 import software.amazon.awscdk.Stack;
 import software.amazon.awscdk.StackProps;
 import software.amazon.awscdk.services.applicationautoscaling.EnableScalingProps;
+import software.amazon.awscdk.services.cloudwatch.Alarm;
+import software.amazon.awscdk.services.cloudwatch.ComparisonOperator;
+import software.amazon.awscdk.services.cloudwatch.CreateAlarmOptions;
+import software.amazon.awscdk.services.cloudwatch.MetricOptions;
+import software.amazon.awscdk.services.cloudwatch.TreatMissingData;
+import software.amazon.awscdk.services.cloudwatch.actions.SnsAction;
 import software.amazon.awscdk.services.dynamodb.Attribute;
 import software.amazon.awscdk.services.dynamodb.AttributeType;
 import software.amazon.awscdk.services.dynamodb.BillingMode;
@@ -43,11 +49,16 @@ import software.amazon.awscdk.services.elasticloadbalancingv2.HealthCheck;
 import software.amazon.awscdk.services.elasticloadbalancingv2.NetworkListener;
 import software.amazon.awscdk.services.elasticloadbalancingv2.NetworkLoadBalancer;
 import software.amazon.awscdk.services.iam.ManagedPolicy;
+import software.amazon.awscdk.services.logs.FilterPattern;
 import software.amazon.awscdk.services.logs.LogGroup;
 import software.amazon.awscdk.services.logs.LogGroupProps;
+import software.amazon.awscdk.services.logs.MetricFilter;
+import software.amazon.awscdk.services.logs.MetricFilterOptions;
 import software.amazon.awscdk.services.logs.RetentionDays;
 import software.amazon.awscdk.services.sns.Topic;
 import software.amazon.awscdk.services.sns.TopicProps;
+import software.amazon.awscdk.services.sns.subscriptions.EmailSubscription;
+import software.amazon.awscdk.services.sns.subscriptions.EmailSubscriptionProps;
 import software.constructs.Construct;
 
 import java.util.Collections;
@@ -135,15 +146,51 @@ public class ProductsServiceStack extends Stack {
         productsDdb.grantReadWriteData(fargateTaskDefinition.getTaskRole());
         this.productEventsTopic.grantPublish(fargateTaskDefinition.getTaskRole());
 
+        LogGroup logGroup = new LogGroup(this, "LogGroup",
+                LogGroupProps.builder()
+                        .logGroupName("ProductsService")
+                        .removalPolicy(RemovalPolicy.DESTROY)
+                        .retention(RetentionDays.ONE_MONTH)
+                        .build());
+
         AwsLogDriver logDriver = new AwsLogDriver(AwsLogDriverProps.builder()
-                .logGroup(new LogGroup(this, "LogGroup",
-                        LogGroupProps.builder()
-                                .logGroupName("ProductsService")
-                                .removalPolicy(RemovalPolicy.DESTROY)
-                                .retention(RetentionDays.ONE_MONTH)
-                                .build()))
+                .logGroup(logGroup)
                 .streamPrefix("ProductsService")
                 .build());
+
+        //Metric
+        MetricFilter productNotFoundMetricFilter = logGroup.addMetricFilter("ProductWithSameCode", MetricFilterOptions.builder()
+                .filterPattern(FilterPattern.literal("Can not create a product with same code."))
+                .metricName("ProductWithSameCode")
+                .metricNamespace("Product")
+                .build());
+
+        //Alarm
+        Alarm productNotFoundAlarm = productNotFoundMetricFilter.metric()
+                .with(MetricOptions.builder()
+                        .period(Duration.minutes(2))
+                        .statistic("Sum")
+                        .build())
+                .createAlarm(this, "ProductWithSameCodeAlarm", CreateAlarmOptions.builder()
+                        .alarmName("ProductWithSameCodeAlarm")
+                        .alarmDescription("Some product was not created due code duplicity")
+                        .evaluationPeriods(1)
+                        .threshold(2)
+                        .actionsEnabled(true)
+                        .treatMissingData(TreatMissingData.NOT_BREACHING)
+                        .comparisonOperator(ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD)
+                        .build());
+
+        //Action
+        Topic productAlarmsTopic = new Topic(this, "ProductsAlarmsTopic", TopicProps.builder()
+                .displayName("Product alarms topic")
+                .topicName("product-alarms")
+                .build());
+        productAlarmsTopic.addSubscription(new EmailSubscription("email@gmail.com",
+                EmailSubscriptionProps.builder()
+                        .json(false)
+                        .build()));
+        productNotFoundAlarm.addAlarmAction(new SnsAction(productAlarmsTopic));
 
         Map<String, String> envVariables = new HashMap<>();
         envVariables.put("SERVER_PORT", "8080");

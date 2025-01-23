@@ -5,6 +5,12 @@ import software.amazon.awscdk.RemovalPolicy;
 import software.amazon.awscdk.Stack;
 import software.amazon.awscdk.StackProps;
 import software.amazon.awscdk.services.applicationautoscaling.EnableScalingProps;
+import software.amazon.awscdk.services.cloudwatch.ComparisonOperator;
+import software.amazon.awscdk.services.cloudwatch.CreateAlarmOptions;
+import software.amazon.awscdk.services.cloudwatch.Metric;
+import software.amazon.awscdk.services.cloudwatch.MetricOptions;
+import software.amazon.awscdk.services.cloudwatch.TreatMissingData;
+import software.amazon.awscdk.services.cloudwatch.Unit;
 import software.amazon.awscdk.services.dynamodb.Attribute;
 import software.amazon.awscdk.services.dynamodb.AttributeType;
 import software.amazon.awscdk.services.dynamodb.BillingMode;
@@ -77,9 +83,26 @@ public class AuditServiceStack extends Stack {
                         .type(AttributeType.STRING)
                         .build())
                 .timeToLiveAttribute("ttl")
-                .billingMode(BillingMode.PAY_PER_REQUEST)
-//                .readCapacity(1)
-//                .writeCapacity(1)
+                .billingMode(BillingMode.PROVISIONED)
+                .readCapacity(1)
+                .writeCapacity(1)
+                .build());
+        //Metric
+        Metric writeThrottleEvents = eventsDdb.metric("WriteThrottleEvents", MetricOptions.builder()
+                .period(Duration.minutes(2))
+                .statistic("SampleCount")
+                .unit(Unit.COUNT)
+                .build());
+
+        //Alarm
+        writeThrottleEvents.createAlarm(this, "WriteThrottleEventsAlarm", CreateAlarmOptions.builder()
+                .alarmName("WriteThrottleEvents")
+                .alarmDescription("Write throttled events alarm in events DDB")
+                .actionsEnabled(false)
+                .evaluationPeriods(1)
+                .threshold(15)
+                .treatMissingData(TreatMissingData.NOT_BREACHING)
+                .comparisonOperator(ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD)
                 .build());
 
         Queue productEventsDlq = new Queue(this, "ProductEventsDlq",
